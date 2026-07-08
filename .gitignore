@@ -427,3 +427,7 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# our own test build outputs (from tests\build_tests.bat)
+*.exe
+*.obj
