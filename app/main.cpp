@@ -51,10 +51,19 @@ int main()
 
             if (e.type == sf::Event::MouseButtonPressed) {
                 Vec2 p = { (float)e.mouseButton.x, (float)e.mouseButton.y };
-                if (e.mouseButton.button == sf::Mouse::Left)
-                    sim.spawnThreat(p);
+                if (e.mouseButton.button == sf::Mouse::Left) {
+                    // if the click grabbed the slider, don't also spawn a threat
+                    if (!renderer.sliderPress(p.x, p.y))
+                        sim.spawnThreat(p);
+                }
                 else if (e.mouseButton.button == sf::Mouse::Right)
                     sim.spawnWeapon(p);
+            }
+            else if (e.type == sf::Event::MouseButtonReleased) {
+                renderer.sliderRelease();
+            }
+            else if (e.type == sf::Event::MouseMoved) {
+                renderer.sliderDrag((float)e.mouseMove.x);  // no-op unless dragging
             }
             else if (e.type == sf::Event::KeyPressed) {
                 switch (e.key.code) {
@@ -66,6 +75,7 @@ int main()
                     break;
                 case sf::Keyboard::R:
                     sim.reset();
+                    renderer.resetSliders();  // costs back to defaults too
                     runTime = 0.f;
                     break;
                 case sf::Keyboard::W:
@@ -73,6 +83,9 @@ int main()
                     break;
                 case sf::Keyboard::T:
                     sim.toggleMeleeCost();
+                    break;
+                case sf::Keyboard::C:
+                    sim.toggleFocusFire();
                     break;
                 case sf::Keyboard::H: {
                     // injure whoever is closest to the mouse
@@ -88,6 +101,9 @@ int main()
                 }
             }
         }
+
+        // spawn-rate dial: level 0..10 maps to 0..3 threats/second
+        sim.setThreatSpawnRate(renderer.sliderSpawnLevel() * 0.3f);
 
         float dt = clock.restart().asSeconds();
         if (paused || showHelp) {

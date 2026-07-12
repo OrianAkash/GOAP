@@ -19,7 +19,8 @@ enum class Fact {
     NextToWeapon,      // close enough to pick a weapon up
     AtPatrolPoint,
     AtOutpost,
-    LowHealth
+    LowHealth,
+    ReinforcementsCalled   // squad has radioed for backup this wave
 };
 
 const char* factName(Fact f);

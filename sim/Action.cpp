@@ -95,6 +95,16 @@ std::vector<Action> buildActionList(bool meleeCheap)
         a.eff.set(Fact::LowHealth, false);
         list.push_back(a);
     }
+    {
+        // radio for backup - only possible from the outpost (the "command
+        // post"). the agent plans this when fighting can't reach its goal.
+        Action a;
+        a.name = "CallReinforcements";
+        a.cost = 1;
+        a.pre.set(Fact::AtOutpost, true);
+        a.eff.set(Fact::ReinforcementsCalled, true);
+        list.push_back(a);
+    }
 
     return list;
 }

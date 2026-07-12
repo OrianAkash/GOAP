@@ -21,12 +21,12 @@ the whole demo.
 
 ## Our facts
 
-8 booleans (see `WorldState.h`): `HasWeapon`, `WeaponAvailable`,
+9 booleans (see `WorldState.h`): `HasWeapon`, `WeaponAvailable`,
 `ThreatExists`, `ThreatInRange`, `NextToWeapon`, `AtPatrolPoint`, `AtOutpost`,
-`LowHealth`.
+`LowHealth`, `ReinforcementsCalled`.
 
 The real world (positions, hp, timers) lives in `Simulation.cpp`. Before an
-agent plans, we compress the real world into these 8 facts ("snapshot"). The
+agent plans, we compress the real world into these facts ("snapshot"). The
 planner never sees a coordinate - that separation is what makes it fast and
 easy to reason about.
 
@@ -42,14 +42,17 @@ easy to reason about.
 | GoToPatrolPoint | - | AtPatrolPoint | 1 |
 | RetreatToOutpost | - | AtOutpost | 1 |
 | HealAtOutpost | AtOutpost | !LowHealth | 1 |
+| CallReinforcements | AtOutpost | ReinforcementsCalled | 1 |
 
 (Movement actions additionally set the *other* location facts to false - see
 "the ordering bug" below.)
 
 Goals, in priority order: **Survive** (`!LowHealth`, when hp < 35),
-**EliminateThreat** (`!ThreatExists`, when threats exist), **Patrol**
-(`AtPatrolPoint`, otherwise). Highest applicable one wins, re-checked every
-tick.
+**CallForHelp** (`ReinforcementsCalled`, when badly overwhelmed),
+**Defend** / **EliminateThreat** (both `!ThreatExists`, when threats exist),
+**Patrol** (`AtPatrolPoint`, otherwise). Highest applicable one wins,
+re-checked every tick. Defend and EliminateThreat share the same goal *state*
+(kill the threats) but differ in execution - see "Holding the line" below.
 
 ## Regressive A*
 
@@ -140,13 +143,71 @@ switches to punching. One number changed, no code changed, completely
 different squad behaviour. That's the "action costs shape behaviour" part of
 our research question in one keypress.
 
+## Holding the line (adapting to pressure)
+
+Crank the spawn rate up and 3 agents can't win a war of attrition - so the
+squad adapts. Once the threats clearly outnumber the living defenders
+(>= 2x, with hysteresis so it doesn't flicker), every agent switches from
+**EliminateThreat** to a **Defend** goal. Defend has the *same* symbolic goal
+(`ThreatExists = false`), so the planner still produces the same
+`Approach > Shoot` plans - the only difference is in *execution*: a "leash"
+keeps a Defending agent from chasing a threat further than the heal-zone
+radius from the outpost. They fall back, fight from home, and heal while they
+fight, so they hold out far longer. Nobody scripted "retreat at 6 enemies";
+it falls out of goal arbitration re-evaluated every tick. This is a nice
+example of the same plan meaning different behaviour under a different
+execution posture.
+
+## Squad coordination (the layer on top of GOAP)
+
+Vanilla GOAP agents plan *independently*, so ours used to all target the
+nearest threat and dogpile it while other threats walked past to the outpost.
+We added a thin **coordinator** that runs before the agents plan and hands each
+one a *different* target (least-loaded threat, nearest first, with a little
+stickiness to avoid flip-flopping). Each agent then still uses its own GOAP
+plan to carry out the assignment. This is exactly how F.E.A.R. did it - a
+squad manager on top, GOAP underneath - and it is a big, measurable win:
+in our tests, at a steady swarm the outpost stayed at full health with
+coordination on and was nearly destroyed with it off. Press **C** in the demo
+to toggle it and show the difference live.
+
+## Reinforcements as a planned action (not a spawn timer)
+
+At extreme spawn rates even a holding squad loses - it's a numbers game. The
+obvious fix is "spawn more defenders," but *how many units exist* is a
+game/spawn concern, not something GOAP decides. So we made the **decision to
+get help** a GOAP action instead of a timer.
+
+`CallReinforcements` has precondition `AtOutpost` and effect
+`ReinforcementsCalled`. A `CallForHelp` goal (state `ReinforcementsCalled=true`)
+kicks in only when the squad is *badly* outnumbered (>= 3x). Now the agent
+plans it: "fighting can't get me to safety, but there's an action whose effect
+does, and I'm already holding at the outpost so its precondition is met -
+cheapest plan: `CallReinforcements`." The label above the agent literally
+changes from an attack plan to `CallReinforcements`. Executing it queues a
+couple of fresh defenders (capped at 8 total) and starts a cooldown.
+
+Two things fall out for free, without extra code:
+
+- **A single caller emerges.** The instant one agent sets `ReinforcementsCalled`
+  true, every other agent's `CallForHelp` goal is satisfied, so they go back to
+  fighting. Nobody assigns "you make the call" - it's a consequence of a shared
+  fact.
+- **Escalating waves.** When the cooldown expires the fact resets to false; if
+  the squad is still overwhelmed, someone calls again. Backup keeps arriving in
+  waves that scale with how badly they're losing, until the cap.
+
+This is the honest, GOAP-faithful way to answer "make them call for backup":
+reinforcement is not a scripted event, it is an action the planner *chose*
+because it was the cheapest way to reach the goal.
+
 ## Limitations / future work
 
 - Facts are booleans only. Real systems (and F.E.A.R.) allow enums/numbers
   with per-fact distance heuristics.
-- Agents plan independently - no squad coordination, they happily dogpile the
-  same threat. GOAP squads usually add a coordinator on top.
+- The coordinator is deliberately simple (greedy target assignment). Real
+  squads assign *roles* (suppress, flank, advance), not just targets.
 - Costs are hand-tuned constants; distance-based costs would make plans
   situational (fetch the gun only if it's close).
-- The snapshot targets the *nearest* threat/weapon; a target-selection layer
-  would be the next step.
+- The Defend "leash" is an execution-layer trick; a fuller solution would
+  model position/cover in the planner itself.

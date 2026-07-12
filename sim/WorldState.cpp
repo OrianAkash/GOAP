@@ -13,6 +13,7 @@ const char* factName(Fact f)
     case Fact::AtPatrolPoint:   return "AtPatrolPoint";
     case Fact::AtOutpost:       return "AtOutpost";
     case Fact::LowHealth:       return "LowHealth";
+    case Fact::ReinforcementsCalled: return "ReinforcementsCalled";
     }
     return "???";
 }

@@ -23,8 +23,22 @@ const sf::Color COL_LINE(255, 255, 255, 60);
 const float HEAL_ZONE_RADIUS = 100.f;  // matches HEAL_ZONE in Simulation.cpp
 }
 
+void Renderer::initSliders()
+{
+    m_sliders.clear();
+
+    Slider spawn;
+    spawn.label = "SPAWN RATE";
+    spawn.x = 1055.f; spawn.y = 58.f; spawn.w = 165.f;
+    spawn.minv = 0; spawn.maxv = 10; spawn.value = 0;  // starts calm
+    spawn.accent = true;
+    m_sliders.push_back(spawn);
+}
+
 bool Renderer::init()
 {
+    initSliders();
+
     // try a few paths so it works from VS (working dir = project folder)
     // and also when you run the exe straight from x64\Release.
     // last resort: fonts that ship with Windows, so a missing assets folder
@@ -66,9 +80,105 @@ void Renderer::draw(sf::RenderWindow& window, const Simulation& sim,
     drawAgents(window, sim, showLabels, runTime);
     drawHud(window, sim, paused, runTime);
     drawLog(window, sim);
+    drawSliders(window);
     if (showHelp)
         drawHelp(window);
     window.display();
+}
+
+// ---- spawn-rate slider -----------------------------------------------------
+
+void Renderer::drawSliders(sf::RenderWindow& window)
+{
+    // grouping panel so the control reads as a unit, not a floating bit
+    sf::RectangleShape panel(sf::Vector2f(272.f, 58.f));
+    panel.setPosition(1000.f, 26.f);
+    panel.setFillColor(sf::Color(0, 0, 0, 110));
+    panel.setOutlineColor(sf::Color(255, 255, 255, 30));
+    panel.setOutlineThickness(1.f);
+    window.draw(panel);
+
+    for (const Slider& s : m_sliders) {
+        window.draw(makeText(s.label, 12, s.x, s.y - 18.f,
+                             s.accent ? COL_THREAT : COL_DIM));
+
+        float frac = (float)(s.value - s.minv) / (float)(s.maxv - s.minv);
+        float hx = s.x + frac * s.w;
+
+        // empty track
+        sf::RectangleShape track(sf::Vector2f(s.w, 3.f));
+        track.setPosition(s.x, s.y - 1.5f);
+        track.setFillColor(sf::Color(120, 120, 128));
+        window.draw(track);
+
+        // for the pressure dial, fill the used portion red so it reads as a
+        // danger/intensity gauge at a glance
+        if (s.accent && frac > 0.f) {
+            sf::RectangleShape fill(sf::Vector2f(frac * s.w, 3.f));
+            fill.setPosition(s.x, s.y - 1.5f);
+            fill.setFillColor(COL_THREAT);
+            window.draw(fill);
+        }
+
+        sf::CircleShape handle(7.f);
+        handle.setOrigin(7.f, 7.f);
+        handle.setPosition(hx, s.y);
+        sf::Color handleCol = s.accent ? COL_THREAT : sf::Color(210, 210, 215);
+        if (s.dragging) handleCol = COL_WEAPON;
+        handle.setFillColor(handleCol);
+        window.draw(handle);
+
+        char val[16];
+        std::snprintf(val, sizeof(val), "%d", s.value);
+        window.draw(makeText(val, 13, s.x + s.w + 12.f, s.y - 9.f, COL_TEXT));
+    }
+}
+
+bool Renderer::sliderPress(float mx, float my)
+{
+    for (Slider& s : m_sliders) {
+        float frac = (float)(s.value - s.minv) / (float)(s.maxv - s.minv);
+        float hx = s.x + frac * s.w;
+        bool onTrack = (mx >= s.x - 12.f && mx <= s.x + s.w + 12.f &&
+                        my >= s.y - 11.f && my <= s.y + 11.f);
+        float dx = mx - hx, dy = my - s.y;
+        bool onHandle = (dx * dx + dy * dy) <= 13.f * 13.f;
+        if (onTrack || onHandle) {
+            s.dragging = true;
+            sliderDrag(mx);   // jump the handle to the click position
+            return true;
+        }
+    }
+    return false;
+}
+
+void Renderer::sliderDrag(float mx)
+{
+    for (Slider& s : m_sliders) {
+        if (!s.dragging)
+            continue;
+        float clamped = mx;
+        if (clamped < s.x) clamped = s.x;
+        if (clamped > s.x + s.w) clamped = s.x + s.w;
+        float frac = (clamped - s.x) / s.w;
+        s.value = s.minv + (int)std::lround(frac * (s.maxv - s.minv));
+    }
+}
+
+void Renderer::sliderRelease()
+{
+    for (Slider& s : m_sliders)
+        s.dragging = false;
+}
+
+void Renderer::resetSliders()
+{
+    initSliders();
+}
+
+int Renderer::sliderSpawnLevel() const
+{
+    return m_sliders.empty() ? 0 : m_sliders[0].value;
 }
 
 void Renderer::drawEntities(sf::RenderWindow& window, const Simulation& sim)
@@ -211,14 +321,28 @@ void Renderer::drawHud(sf::RenderWindow& window, const Simulation& sim,
     // controls, always visible top-left
     window.draw(makeText(
         "LMB spawn threat    RMB spawn weapon    W remove weapons\n"
-        "H injure agent    T melee cost    SPACE pause    R reset    F1 labels    ESC quit",
+        "H injure agent    T melee cost    C coordination    SPACE pause    R reset    F1 labels    ESC quit",
         13, 10.f, 8.f, COL_DIM));
+
+    // squad coordination state, top-left under the controls
+    bool coord = sim.focusFire();
+    window.draw(makeText(
+        coord ? "squad coordination: ON (defenders split targets)"
+              : "squad coordination: OFF (defenders dogpile the nearest)",
+        13, 10.f, 44.f, coord ? COL_OUTPOST_EDGE : COL_WARN));
+
+    // "holding the line" banner, centred, when the squad is outnumbered
+    if (sim.holdingLine()) {
+        sf::Text banner = makeText("OUTNUMBERED - HOLDING THE LINE", 18, 0.f, 40.f,
+                                   COL_THREAT);
+        banner.setPosition(640.f - banner.getLocalBounds().width * 0.5f, 40.f);
+        window.draw(banner);
+    }
 
     // status, top-right
     char status[96];
-    std::snprintf(status, sizeof(status), "t=%.1fs   melee cost: %s%s",
-                  runTime, sim.meleeCheap() ? "1 (cheap!)" : "20 (normal)",
-                  paused ? "   [PAUSED]" : "");
+    std::snprintf(status, sizeof(status), "t=%.1fs%s",
+                  runTime, paused ? "   [PAUSED]" : "");
     sf::Text st = makeText(status, 14, 0.f, 8.f,
                            paused ? sf::Color::Yellow : COL_TEXT);
     st.setPosition(1270.f - st.getLocalBounds().width, 8.f);
@@ -268,6 +392,9 @@ void Renderer::drawHelp(sf::RenderWindow& window)
         "Left click   spawn a threat        Right click  drop a weapon\n"
         "W  remove all weapons (forces replanning mid-plan!)\n"
         "H  injure the agent nearest the mouse (Survive goal)\n"
+        "Drag SPAWN RATE (top-right) up - outnumbered, they hold the outpost;\n"
+        "   overwhelmed, an agent PLANS 'CallReinforcements' and backup arrives\n"
+        "C  squad coordination on/off (split targets vs dogpile the nearest)\n"
         "T  flip melee cost 20 <-> 1 (cost tuning changes behaviour)\n"
         "SPACE pause    R reset    F1 hide labels    ESC quit",
         16, x, y, COL_TEXT));

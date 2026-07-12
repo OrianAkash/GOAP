@@ -41,6 +41,8 @@ the demo also has its font when zipped up for submission.
 | W | remove all ground weapons |
 | H | injure the agent nearest the mouse |
 | T | flip melee cost 20 <-> 1 |
+| C | squad coordination on/off (split targets vs dogpile the nearest) |
+| drag SPAWN RATE (top-right) | auto-spawn threats; watch the squad reprioritise Patrol/Fight/Survive, hold the outpost when outnumbered, and *plan* to call reinforcements when overwhelmed |
 | Space | pause |
 | R | reset |
 | F1 | hide/show agent labels |

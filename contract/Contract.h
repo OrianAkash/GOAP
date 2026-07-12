@@ -1,7 +1,11 @@
 #pragma once
-// contract/Contract.h — FROZEN INTERFACE (v1.0)
+// contract/Contract.h — FROZEN INTERFACE (v1.1)
 // Do NOT modify this file. Both halves of the project compile against this
 // exact file. Any change must be agreed by both teammates and versioned.
+//
+// v1.1: added setThreatSpawnRate/threatSpawnRate so the UI can auto-spawn
+//       threats over time (the SPAWN RATE dial). The whole v1.0 API is
+//       unchanged, so existing code keeps working.
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -53,6 +57,8 @@ public:
     void removeAllWeapons();           // removes ground pickups only, not carried weapons
     void injureNearestAgent(Vec2 pos); // drops the nearest living agent to 20 HP
     void toggleMeleeCost();            // flips MeleeThreat action cost 20 <-> 1
+    void setThreatSpawnRate(float perSecond); // v1.1: auto-spawn threats over time (0 = off)
+    void toggleFocusFire();            // v1.1: squad target-splitting on/off (dogpile vs spread)
 
     // Queries (renderer, every frame). References are valid until the next
     // tick()/command/reset() call.
@@ -60,6 +66,9 @@ public:
     const std::vector<EntityView>& entities() const;
     const std::vector<std::string>& eventLog() const; // newest last, capped at 50
     bool meleeCheap() const;           // current state of the melee-cost toggle
+    float threatSpawnRate() const;     // v1.1: current auto-spawn rate (threats/sec)
+    bool focusFire() const;            // v1.1: is squad target-splitting on?
+    bool holdingLine() const;          // v1.1: is the squad currently outnumbered/defending?
     Vec2 worldSize() const;            // always {1280, 720}
 
 private:

@@ -20,7 +20,7 @@ struct Action {
 
 // Builds the full list of actions our agents know about.
 // meleeCheap flips the melee cost (20 -> 1). We rebuild the list every
-// time we plan, so toggling it at runtime changes the plans live.
+// time we plan, so toggling it at runtime (T key) changes the plans live.
 std::vector<Action> buildActionList(bool meleeCheap);
 
 } // namespace goap

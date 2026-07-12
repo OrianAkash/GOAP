@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <random>
 
 namespace goap {
 
@@ -35,6 +36,12 @@ const float AGENT_SPEED   = 120.f;   // px per second
 const float THREAT_MAX_HP = 75.f;
 const float THREAT_SPEED  = 60.f;
 
+// body radii for soft collision separation (drawn radii are 10 / 9, these are
+// a hair bigger so there's a visible gap). purely cosmetic - the planner never
+// sees positions, so none of this touches the AI.
+const float AGENT_RADIUS  = 11.f;
+const float THREAT_RADIUS = 10.f;
+
 const float SHOOT_RANGE = 180.f, SHOOT_DMG = 25.f, SHOOT_COOLDOWN = 0.8f;
 const float MELEE_RANGE = 40.f,  MELEE_DMG = 15.f, MELEE_COOLDOWN = 0.6f;
 
@@ -54,6 +61,19 @@ const float APPROACH_UNARMED = 35.f;   // need to get close for melee
 const float RESPAWN_TIME = 5.f;
 const float REPLAN_COOLDOWN = 0.25f;   // don't replan more often than this
 const float FAILED_PLAN_WAIT = 0.5f;
+
+const int MAX_AUTO_THREATS = 40;       // safety cap so the spawn dial can't
+                                       // spawn thousands and tank the framerate
+
+const float DEFEND_LEASH = 100.f;      // while holding the line, agents won't
+                                       // chase a threat further than this from
+                                       // the outpost (== heal zone, so they heal
+                                       // while they fight). matches HEAL_ZONE.
+
+const int   MAX_AGENTS = 8;            // cap on total defenders (start 3 + backup)
+const int   REINFORCE_COUNT = 2;       // defenders added per CallReinforcements
+const float REINFORCE_COOLDOWN = 12.f; // seconds before backup can be called again
+const float CALL_TIME = 0.5f;          // how long the "radio for backup" act takes
 
 float dist(Vec2 a, Vec2 b)
 {
@@ -89,6 +109,7 @@ struct AgentData {
     std::vector<Action> plan;
     std::size_t step = 0;
     AgentPhase phase = AgentPhase::Idle;
+    int targetThreatId = 0;     // threat the coordinator assigned us (0 = none)
 
     float attackTimer = 0.f;    // counts down between shots/swings
     float actTimer = 0.f;       // generic "doing something" timer (pickup)
@@ -112,8 +133,17 @@ struct WeaponData {
 
 struct Simulation::Impl {
     float time = 0.f;
-    bool cheapMelee = false;
+    bool cheapMelee = false;       // T key flips MeleeThreat cost 20 <-> 1
+    float threatSpawnRate = 0.f;   // auto-spawned threats per second (0 = off)
+    float spawnAccumulator = 0.f;  // fractional threats waiting to be spawned
+    std::mt19937 rng{ 12345u };    // fixed seed -> a reset replays the same run
     bool replanEveryone = false;   // set when action costs change
+    bool holdingLine = false;      // squad is outnumbered -> fall back and defend
+    bool focusFire = true;         // coordinator splits targets (C toggles it)
+    bool reinforcementsCalled = false; // backup radioed this wave (resets on cooldown)
+    float reinforceCooldown = 0.f;     // counts down; when it hits 0 backup is available again
+    int pendingReinforcements = 0;     // defenders to add after the update loop (avoids
+                                       // growing the agents vector while iterating it)
     float outpostHp = OUTPOST_MAX_HP;
     bool overrunLogged = false;
     int threatCounter = 0;
@@ -183,11 +213,151 @@ struct Simulation::Impl {
         return best;
     }
 
+    int countLivingAgents()
+    {
+        int n = 0;
+        for (auto& a : agents)
+            if (a.alive) n++;
+        return n;
+    }
+
+    // where an agent (re)spawns: the 3 original posts, then a small ring
+    // around the outpost for reinforcements (ids 4+)
+    Vec2 spawnPointFor(int id)
+    {
+        if (id >= 1 && id <= 3)
+            return AGENT_SPAWNS[id - 1];
+        float ang = (float)id * 2.399963f;  // golden angle -> they don't stack
+        return clampToWorld({ OUTPOST_POS.x + std::cos(ang) * 34.f,
+                              OUTPOST_POS.y + std::sin(ang) * 34.f });
+    }
+
+    // "we can't win this by fighting" - the trigger for calling backup.
+    // (3x is stricter than the 2x that starts the fall-back to Defend.)
+    bool squadOverwhelmed()
+    {
+        int living = countLivingAgents();
+        return living > 0 && (int)threats.size() >= living * 3;
+    }
+
+    // actually radio for backup: queue new defenders (added after the update
+    // loop so we never resize the agents vector while iterating it)
+    void callReinforcements(const AgentData& caller)
+    {
+        reinforcementsCalled = true;
+        reinforceCooldown = REINFORCE_COOLDOWN;
+        int room = MAX_AGENTS - (int)agents.size();
+        int add = room < REINFORCE_COUNT ? room : REINFORCE_COUNT;
+        if (add < 0) add = 0;
+        pendingReinforcements += add;
+        if (add > 0)
+            addLog(agentName(caller) + " called reinforcements! (+" +
+                   std::to_string(add) + " defenders inbound)");
+        else
+            addLog(agentName(caller) + " called reinforcements (none available)");
+    }
+
+    ThreatData* threatById(int id)
+    {
+        for (auto& t : threats)
+            if (t.id == id) return &t;
+        return nullptr;
+    }
+
+    // which threat this agent should be fighting: its coordinator-assigned
+    // target if it still exists, otherwise just the nearest one
+    ThreatData* engageTarget(const AgentData& a)
+    {
+        ThreatData* t = threatById(a.targetThreatId);
+        if (t) return t;
+        return nearestThreat(a.pos);
+    }
+
+    // "hold the line": once the threats clearly outnumber the living defenders
+    // the whole squad falls back to defend the outpost. hysteresis (enter at
+    // 2x, leave at 1x) stops it flickering on the boundary.
+    void updateHoldStatus()
+    {
+        int living = countLivingAgents();
+        int th = (int)threats.size();
+        if (living <= 0) { holdingLine = false; return; }
+        if (th >= living * 2)      holdingLine = true;
+        else if (th <= living)     holdingLine = false;
+    }
+
+    // the squad coordinator (this is the layer ON TOP of GOAP, the way F.E.A.R.
+    // does it): hand each defender a different threat so they spread out and
+    // focus-fire instead of all dogpiling the nearest one. Each agent still
+    // uses its own GOAP plan to actually carry out the assignment.
+    void coordinateTargets()
+    {
+        if (threats.empty()) {
+            for (auto& a : agents) a.targetThreatId = 0;
+            return;
+        }
+        if (!focusFire) {
+            // coordination off -> target 0 makes engageTarget fall back to the
+            // nearest threat, i.e. everyone dogpiles (the "before" case)
+            for (auto& a : agents)
+                a.targetThreatId = 0;
+            return;
+        }
+
+        std::map<int, int> load;  // how many agents already sent to each threat
+        for (auto& a : agents) {
+            if (!a.alive) { a.targetThreatId = 0; continue; }
+            ThreatData* best = nullptr;
+            float bestScore = 0.f;
+            for (auto& t : threats) {
+                // prefer the least-loaded threat, then the nearest; a small
+                // bonus for keeping our current target avoids frame-to-frame
+                // flip-flopping when two threats are about the same distance
+                float score = load[t.id] * 100000.f + dist(a.pos, t.pos);
+                if (t.id == a.targetThreatId) score -= 60.f;
+                if (!best || score < bestScore) { best = &t; bestScore = score; }
+            }
+            a.targetThreatId = best ? best->id : 0;
+            if (best) load[best->id]++;
+        }
+    }
+
+    // pick a random point just inside one of the four map edges, so
+    // auto-spawned threats stream in from around the border
+    Vec2 randomEdgePos()
+    {
+        std::uniform_real_distribution<float> ox(40.f, WORLD_W - 40.f);
+        std::uniform_real_distribution<float> oy(40.f, WORLD_H - 40.f);
+        switch (rng() % 4) {
+        case 0:  return { ox(rng), 40.f };            // top
+        case 1:  return { WORLD_W - 40.f, oy(rng) };  // right
+        case 2:  return { ox(rng), WORLD_H - 40.f };  // bottom
+        default: return { 40.f, oy(rng) };            // left
+        }
+    }
+
+    // add a threat without rebuilding views (tick rebuilds once at the end)
+    void spawnThreatAt(Vec2 pos, const char* note)
+    {
+        ThreatData t;
+        t.id = ++threatCounter;
+        t.pos = clampToWorld(pos);
+        threats.push_back(t);
+        addLog("threat T" + std::to_string(t.id) + " spawned" + std::string(note));
+    }
+
     void resetWorld(bool firstTime)
     {
         time = 0.f;
         cheapMelee = false;
+        threatSpawnRate = 0.f;
+        spawnAccumulator = 0.f;
+        rng.seed(12345u);
         replanEveryone = false;
+        holdingLine = false;
+        focusFire = true;
+        reinforcementsCalled = false;
+        reinforceCooldown = 0.f;
+        pendingReinforcements = 0;
         outpostHp = OUTPOST_MAX_HP;
         overrunLogged = false;
         threatCounter = 0;
@@ -225,10 +395,15 @@ struct Simulation::Impl {
         s.set(Fact::WeaponAvailable, !weapons.empty());
         s.set(Fact::ThreatExists, !threats.empty());
 
-        const ThreatData* t = nullptr;
-        for (auto& th : threats) {   // const-friendly nearest
-            if (!t || dist(a.pos, th.pos) < dist(a.pos, t->pos))
-                t = &th;
+        // range is measured against the threat we'd actually engage (our
+        // assigned target if any, else the nearest) so the plan matches what
+        // the execution layer will do
+        const ThreatData* t = threatById(a.targetThreatId);
+        if (!t) {
+            for (auto& th : threats) {   // fall back to nearest
+                if (!t || dist(a.pos, th.pos) < dist(a.pos, t->pos))
+                    t = &th;
+            }
         }
         float attackRange = a.hasWeapon ? SHOOT_RANGE : MELEE_RANGE;
         s.set(Fact::ThreatInRange, t != nullptr && dist(a.pos, t->pos) <= attackRange);
@@ -247,10 +422,15 @@ struct Simulation::Impl {
         // you are healed back up to HEALED_HP, otherwise the goal would be
         // "done" the moment you regenerate 1 hp past the threshold
         s.set(Fact::LowHealth, a.surviveMode ? (a.hp < HEALED_HP) : (a.hp < LOW_HP));
+
+        // squad-wide fact: has backup already been radioed this wave?
+        s.set(Fact::ReinforcementsCalled, reinforcementsCalled);
         return s;
     }
 
-    // priority order: Survive > EliminateThreat > Patrol
+    // priority order: Survive > Defend > EliminateThreat > Patrol.
+    // Defend is "kill the threats, but from home" - it only differs from
+    // EliminateThreat in how it is executed (see the leash in executeAction).
     std::string pickGoal(AgentData& a)
     {
         if (a.hp < LOW_HP)
@@ -260,8 +440,13 @@ struct Simulation::Impl {
 
         if (a.surviveMode)
             return "Survive";
-        if (!threats.empty())
-            return "EliminateThreat";
+        if (!threats.empty()) {
+            // dire and haven't called backup yet -> go radio for reinforcements
+            if (squadOverwhelmed() && !reinforcementsCalled &&
+                (int)agents.size() < MAX_AGENTS)
+                return "CallForHelp";
+            return holdingLine ? "Defend" : "EliminateThreat";
+        }
         return "Patrol";
     }
 
@@ -270,8 +455,10 @@ struct Simulation::Impl {
         WorldState g;
         if (goal == "Survive")
             g.set(Fact::LowHealth, false);
-        else if (goal == "EliminateThreat")
+        else if (goal == "EliminateThreat" || goal == "Defend")
             g.set(Fact::ThreatExists, false);
+        else if (goal == "CallForHelp")
+            g.set(Fact::ReinforcementsCalled, true);
         else if (goal == "Patrol")
             g.set(Fact::AtPatrolPoint, true);
         return g;
@@ -375,9 +562,32 @@ struct Simulation::Impl {
             }
         }
         else if (cur.name == "ApproachThreat") {
-            ThreatData* t = nearestThreat(a.pos);
+            ThreatData* t = engageTarget(a);
             if (!t) { invalidatePlan(a, "no threats left"); return; }
             float stopDist = a.hasWeapon ? APPROACH_ARMED : APPROACH_UNARMED;
+
+            if (a.goal == "Defend") {
+                // hold the line: fight from the outpost, don't chase into the
+                // field. if we drifted out, walk home first; otherwise advance
+                // toward the threat but never past the leash (so we keep
+                // healing while we fight). the threats come to us.
+                if (dist(a.pos, OUTPOST_POS) > DEFEND_LEASH + 2.f) {
+                    moveToward(a, OUTPOST_POS, dt);
+                    return;
+                }
+                if (dist(a.pos, t->pos) <= stopDist) { completeStep(a); return; }
+                Vec2 dest = t->pos;
+                float dh = dist(OUTPOST_POS, dest);
+                if (dh > DEFEND_LEASH) {   // clamp target onto the leash circle
+                    dest.x = OUTPOST_POS.x + (dest.x - OUTPOST_POS.x) / dh * DEFEND_LEASH;
+                    dest.y = OUTPOST_POS.y + (dest.y - OUTPOST_POS.y) / dh * DEFEND_LEASH;
+                }
+                moveToward(a, dest, dt);
+                if (dist(a.pos, t->pos) <= stopDist)
+                    completeStep(a);
+                return;
+            }
+
             if (dist(a.pos, t->pos) <= stopDist) {
                 completeStep(a);
                 return;
@@ -390,7 +600,7 @@ struct Simulation::Impl {
             float dmg = melee ? MELEE_DMG : SHOOT_DMG;
             float cooldown = melee ? MELEE_COOLDOWN : SHOOT_COOLDOWN;
 
-            ThreatData* t = nearestThreat(a.pos);
+            ThreatData* t = engageTarget(a);
             if (!t) { completeStep(a); return; }  // someone else got the kill
             a.phase = AgentPhase::Acting;
             a.hasTarget = true;
@@ -431,6 +641,16 @@ struct Simulation::Impl {
             if (a.hp >= HEALED_HP)
                 completeStep(a);
         }
+        else if (cur.name == "CallReinforcements") {
+            a.phase = AgentPhase::Acting;
+            a.hasTarget = false;
+            a.actTimer += dt;
+            if (a.actTimer >= CALL_TIME) {
+                if (!reinforcementsCalled)     // someone may have just beaten us to it
+                    callReinforcements(a);
+                completeStep(a);
+            }
+        }
         else {
             // unknown action should never happen, but just in case
             invalidatePlan(a, "unknown action " + cur.name);
@@ -444,7 +664,7 @@ struct Simulation::Impl {
             if (a.respawnTimer <= 0.f) {
                 a.alive = true;
                 a.hp = AGENT_MAX_HP;
-                a.pos = AGENT_SPAWNS[a.id - 1];
+                a.pos = spawnPointFor(a.id);
                 a.phase = AgentPhase::Idle;
                 a.goal = "None";
                 a.surviveMode = false;
@@ -558,6 +778,49 @@ struct Simulation::Impl {
         }
     }
 
+    // soft collision: nudge overlapping bodies apart so agents and threats
+    // stop stacking on the same pixel (most visible when the squad holds the
+    // line or patrols). a couple of relaxation passes settle it. this only
+    // moves things a few px and never blocks movement, so combat is unaffected.
+    void resolveCollisions()
+    {
+        struct Body { Vec2* pos; float r; };
+        std::vector<Body> bodies;
+        for (auto& a : agents)
+            if (a.alive) bodies.push_back({ &a.pos, AGENT_RADIUS });
+        for (auto& t : threats)
+            bodies.push_back({ &t.pos, THREAT_RADIUS });
+
+        const int ITER = 2;
+        for (int it = 0; it < ITER; it++) {
+            for (std::size_t i = 0; i < bodies.size(); i++) {
+                for (std::size_t j = i + 1; j < bodies.size(); j++) {
+                    Vec2& p = *bodies[i].pos;
+                    Vec2& q = *bodies[j].pos;
+                    float mind = bodies[i].r + bodies[j].r;
+                    float dx = q.x - p.x, dy = q.y - p.y;
+                    float d2 = dx * dx + dy * dy;
+                    if (d2 >= mind * mind) continue;
+                    float d = std::sqrt(d2);
+                    if (d < 0.0001f) {   // exactly coincident -> deterministic nudge
+                        dx = (float)(((int)i % 3) - 1);
+                        dy = (float)(((int)j % 3) - 1);
+                        d = std::sqrt(dx * dx + dy * dy);
+                        if (d < 0.0001f) { dx = 1.f; dy = 0.f; d = 1.f; }
+                    }
+                    float push = (mind - d) * 0.5f;
+                    float ux = dx / d, uy = dy / d;
+                    p.x -= ux * push; p.y -= uy * push;
+                    q.x += ux * push; q.y += uy * push;
+                }
+            }
+        }
+        for (auto& a : agents)
+            if (a.alive) a.pos = clampToWorld(a.pos);
+        for (auto& t : threats)
+            t.pos = clampToWorld(t.pos);
+    }
+
     void updateHealing(float dt)
     {
         for (auto& a : agents) {
@@ -634,6 +897,16 @@ struct Simulation::Impl {
         if (dt > 0.f) {
             time += dt;
 
+            // pressure dial: drip in threats at the chosen rate
+            if (threatSpawnRate > 0.f) {
+                spawnAccumulator += threatSpawnRate * dt;
+                while (spawnAccumulator >= 1.f) {
+                    spawnAccumulator -= 1.f;
+                    if ((int)threats.size() < MAX_AUTO_THREATS)
+                        spawnThreatAt(randomEdgePos(), " (pressure)");
+                }
+            }
+
             // costs changed -> everyone throws away their plan once
             if (replanEveryone) {
                 replanEveryone = false;
@@ -643,10 +916,37 @@ struct Simulation::Impl {
                 }
             }
 
+            // reinforcement backup becomes available again once the cooldown
+            // runs out (lets the squad call another wave if still overwhelmed)
+            if (reinforceCooldown > 0.f) {
+                reinforceCooldown -= dt;
+                if (reinforceCooldown <= 0.f)
+                    reinforcementsCalled = false;
+            }
+
+            // squad-level thinking happens before the individual agents plan:
+            // decide whether we are outnumbered, then split up the targets
+            updateHoldStatus();
+            coordinateTargets();
+
             for (auto& a : agents)
                 updateAgent(a, dt);
+
+            // add any queued reinforcements now that we're done iterating agents
+            while (pendingReinforcements > 0 && (int)agents.size() < MAX_AGENTS) {
+                pendingReinforcements--;
+                AgentData na;
+                na.id = (int)agents.size() + 1;
+                na.pos = spawnPointFor(na.id);
+                na.patrolIndex = na.id % 4;
+                agents.push_back(na);
+                addLog(agentName(na) + " arrived as reinforcement");
+            }
+            pendingReinforcements = 0;
+
             updateThreats(dt);
             updateHealing(dt);
+            resolveCollisions();   // keep bodies from overlapping (cosmetic)
         }
 
         rebuildViews();
@@ -675,11 +975,7 @@ void Simulation::reset()
 
 void Simulation::spawnThreat(Vec2 pos)
 {
-    ThreatData t;
-    t.id = ++m_impl->threatCounter;
-    t.pos = clampToWorld(pos);
-    m_impl->threats.push_back(t);
-    m_impl->addLog("threat T" + std::to_string(t.id) + " spawned");
+    m_impl->spawnThreatAt(pos, "");
     m_impl->rebuildViews();
 }
 
@@ -721,10 +1017,31 @@ void Simulation::toggleMeleeCost()
     m_impl->rebuildViews();
 }
 
+void Simulation::setThreatSpawnRate(float perSecond)
+{
+    if (perSecond < 0.f) perSecond = 0.f;
+    // pushed every frame from the slider, so no logging (would spam) and no
+    // rebuild here - tick() rebuilds. drop the leftover fraction when turned off.
+    if (perSecond == 0.f)
+        m_impl->spawnAccumulator = 0.f;
+    m_impl->threatSpawnRate = perSecond;
+}
+
+void Simulation::toggleFocusFire()
+{
+    m_impl->focusFire = !m_impl->focusFire;
+    m_impl->addLog(m_impl->focusFire ? "squad coordination ON (split targets)"
+                                     : "squad coordination OFF (dogpile nearest)");
+    m_impl->rebuildViews();
+}
+
 const std::vector<AgentView>& Simulation::agents() const { return m_impl->agentViews; }
 const std::vector<EntityView>& Simulation::entities() const { return m_impl->entityViews; }
 const std::vector<std::string>& Simulation::eventLog() const { return m_impl->log; }
 bool Simulation::meleeCheap() const { return m_impl->cheapMelee; }
+float Simulation::threatSpawnRate() const { return m_impl->threatSpawnRate; }
+bool Simulation::focusFire() const { return m_impl->focusFire; }
+bool Simulation::holdingLine() const { return m_impl->holdingLine; }
 Vec2 Simulation::worldSize() const { return { WORLD_W, WORLD_H }; }
 
 } // namespace goap
