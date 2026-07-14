@@ -369,35 +369,33 @@ void Renderer::drawHelp(sf::RenderWindow& window)
     shade.setFillColor(sf::Color(0, 0, 0, 190));
     window.draw(shade);
 
-    float x = 260.f, y = 130.f;
-    window.draw(makeText("GOAP Outpost Defense", 30, x, y, COL_TEXT));
-    y += 55.f;
+    float x = 300.f, y = 120.f;
+    window.draw(makeText("GOAP Outpost Defense", 32, x, y, COL_TEXT));
+    y += 62.f;
+
+    // what it is - short
     window.draw(makeText(
-        "3 agents defend the outpost using Goal-Oriented Action Planning.\n"
-        "Nobody scripted their behaviour: each agent picks a goal (Patrol /\n"
-        "EliminateThreat / Survive) and SEARCHES for the cheapest sequence of\n"
-        "actions that achieves it. The label above each agent shows its goal\n"
-        "and its current plan. When the world changes, they replan - watch the\n"
-        "log at the bottom.",
+        "3 agents defend the base. Nothing is scripted: each one picks a goal\n"
+        "and searches for the cheapest plan to reach it. Change the world and\n"
+        "they replan. The label above each agent is its goal and current plan.",
         16, x, y, COL_TEXT));
-    y += 140.f;
+    y += 92.f;
+
+    // legend - short
     window.draw(makeText(
-        "cyan circle = agent      yellow dot = carrying weapon\n"
-        "red circle = threat      yellow triangle = weapon pickup\n"
-        "green square = outpost (agents heal inside the ring)\n"
-        "gray circles = patrol points",
+        "cyan = defender     red = attacker     yellow triangle = weapon\n"
+        "green square = base (heal zone)     gray = patrol points",
         16, x, y, COL_DIM));
-    y += 105.f;
+    y += 70.f;
+
+    // controls - short
     window.draw(makeText(
-        "Left click   spawn a threat        Right click  drop a weapon\n"
-        "W  remove all weapons (forces replanning mid-plan!)\n"
-        "H  injure the agent nearest the mouse (Survive goal)\n"
-        "Drag SPAWN RATE (top-right) up - outnumbered, they hold the outpost;\n"
-        "   overwhelmed, an agent PLANS 'CallReinforcements' and backup arrives\n"
-        "C  squad coordination on/off (split targets vs dogpile the nearest)\n"
-        "T  flip melee cost 20 <-> 1 (cost tuning changes behaviour)\n"
-        "SPACE pause    R reset    F1 hide labels    ESC quit",
+        "Left click: spawn attacker        Right click: drop weapon\n"
+        "Drag SPAWN RATE (top-right): raise the pressure\n"
+        "W clear weapons   H injure   T melee cost   C coordination\n"
+        "SPACE pause     R reset     F1 labels     ESC quit",
         16, x, y, COL_TEXT));
-    y += 130.f;
-    window.draw(makeText("press any key to start", 18, x, y, COL_WARN));
+    y += 108.f;
+
+    window.draw(makeText("Press any key to start", 18, x, y, COL_WARN));
 }
