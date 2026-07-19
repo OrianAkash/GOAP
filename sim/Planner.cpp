@@ -7,8 +7,7 @@ namespace goap {
 
 namespace {
 
-// One node in the A* search. Because we search backwards, a node is
-// "the set of conditions we still need to satisfy", not a world state.
+// search node: conditions still needed + actions picked so far
 struct Node {
     WorldState open;            // conditions still unsatisfied
     std::vector<Action> plan;   // actions picked so far, in execution order
@@ -31,7 +30,7 @@ std::vector<Action> makePlan(const WorldState& current,
                              const WorldState& goal,
                              const std::vector<Action>& actions)
 {
-    // safety caps so a weird goal can never freeze the demo
+    // caps so a bad goal can't freeze anything
     const int MAX_EXPANSIONS = 512;
     const int MAX_PLAN_LENGTH = 8;
 
@@ -55,11 +54,11 @@ std::vector<Action> makePlan(const WorldState& current,
         Node node = openList.top();
         openList.pop();
 
-        // done? = every remaining condition is already true in the world
+        // done when the world already satisfies everything left
         if (current.satisfies(node.open))
             return node.plan;
 
-        // skip states we already expanded
+        // already expanded?
         std::string key = node.open.encode();
         if (closed.count(key))
             continue;
@@ -70,9 +69,7 @@ std::vector<Action> makePlan(const WorldState& current,
             continue;
 
         for (const Action& action : actions) {
-            // the action is worth considering if at least one of its effects
-            // satisfies an open condition, and none of its effects would
-            // break another open condition
+            // usable if an effect satisfies an open condition and none break one
             bool useful = false;
             bool contradicts = false;
             for (auto& kv : action.eff.facts) {
@@ -86,8 +83,7 @@ std::vector<Action> makePlan(const WorldState& current,
             if (!useful || contradicts)
                 continue;
 
-            // regression step:
-            // new open = (open - what the effects satisfy) + the preconditions
+            // regress: open = (open - satisfied by effects) + preconditions
             Node child;
             child.open = node.open;
             for (auto& kv : action.eff.facts) {
@@ -97,7 +93,7 @@ std::vector<Action> makePlan(const WorldState& current,
             bool impossible = false;
             for (auto& kv : action.pre.facts) {
                 if (child.open.has(kv.first) && child.open.get(kv.first) != kv.second) {
-                    // would need the same fact to be both true and false
+                    // fact needed both true and false -> dead branch
                     impossible = true;
                     break;
                 }
@@ -106,7 +102,7 @@ std::vector<Action> makePlan(const WorldState& current,
             if (impossible)
                 continue;
 
-            // we search backwards, so prepend: the plan stays in execution order
+            // prepend so the plan comes out in execution order
             child.plan = node.plan;
             child.plan.insert(child.plan.begin(), action);
             child.g = node.g + action.cost;
@@ -116,7 +112,7 @@ std::vector<Action> makePlan(const WorldState& current,
         }
     }
 
-    return {};  // gave up - no plan
+    return {};  // no plan
 }
 
 } // namespace goap

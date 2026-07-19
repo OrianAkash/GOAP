@@ -1,7 +1,5 @@
 // planner_tests.cpp
-// Quick sanity tests for the GOAP planner. No test framework, just prints
-// PASS/FAIL and returns non-zero if anything failed.
-// Build with build_tests.bat (or see the commands inside it).
+// planner sanity tests, no framework. build with build_tests.bat.
 
 #include "../sim/Planner.h"
 #include <iostream>
@@ -11,7 +9,7 @@ using namespace goap;
 
 static int failures = 0;
 
-// build a full 8-fact state in one line
+// full state in one call
 static WorldState makeState(bool hasWeapon, bool weaponAvail, bool threatExists,
                             bool threatInRange, bool nextToWeapon,
                             bool atPatrol, bool atOutpost, bool lowHealth)
@@ -54,8 +52,7 @@ static void check(const std::string& name, const std::vector<Action>& plan,
     }
 }
 
-// checks a plan actually works when run forwards (preconditions hold at
-// every step if we apply the effects one by one)
+// apply the plan forwards and check every precondition holds
 static void checkForwardValid(const std::string& name, WorldState state,
                               const std::vector<Action>& plan)
 {

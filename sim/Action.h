@@ -1,9 +1,7 @@
 #pragma once
 // Action.h
-// A GOAP action = name + cost + preconditions + effects.
-// The planner never cares HOW an action is carried out, only what it
-// needs (pre) and what it changes (eff). The actual execution (moving,
-// shooting...) is handled in Simulation.cpp by looking at the name.
+// action = name + cost + preconditions + effects. execution is separate,
+// Simulation.cpp switches on the name.
 
 #include <string>
 #include <vector>
@@ -18,9 +16,8 @@ struct Action {
     WorldState eff;   // facts that become true/false after running it
 };
 
-// Builds the full list of actions our agents know about.
-// meleeCheap flips the melee cost (20 -> 1). We rebuild the list every
-// time we plan, so toggling it at runtime (T key) changes the plans live.
+// full action list. meleeCheap flips melee 20 -> 1 (T key). rebuilt every
+// plan so the toggle applies immediately.
 std::vector<Action> buildActionList(bool meleeCheap);
 
 } // namespace goap

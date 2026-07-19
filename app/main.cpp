@@ -1,7 +1,6 @@
-// main.cpp - entry point for the GOAP demo (Part B).
-// Owns the window, the input and the main loop. All the AI/game logic is in
-// sim/ behind the Simulation interface (contract/Contract.h), so this file
-// is really just: read input -> poke the sim -> draw it.
+// main.cpp
+// window, input and the main loop. all game logic sits behind the Simulation
+// interface, this file just reads input, ticks the sim and draws it.
 
 #include <SFML/Graphics.hpp>
 #include "../contract/Contract.h"
@@ -23,7 +22,7 @@ int main()
 
     bool paused = false;
     bool showLabels = true;
-    bool showHelp = true;   // instructions overlay on startup
+    bool showHelp = true;   // start on the instructions overlay
     float runTime = 0.f;
     sf::Clock clock;
 
@@ -35,8 +34,7 @@ int main()
                 continue;
             }
 
-            // while the help screen is up, any key/click just closes it
-            // (except ESC which still quits)
+            // any input closes the help screen, ESC still quits
             if (showHelp) {
                 if (e.type == sf::Event::KeyPressed ||
                     e.type == sf::Event::MouseButtonPressed) {
@@ -52,7 +50,7 @@ int main()
             if (e.type == sf::Event::MouseButtonPressed) {
                 Vec2 p = { (float)e.mouseButton.x, (float)e.mouseButton.y };
                 if (e.mouseButton.button == sf::Mouse::Left) {
-                    // if the click grabbed the slider, don't also spawn a threat
+                    // slider click shouldn't also spawn a threat
                     if (!renderer.sliderPress(p.x, p.y))
                         sim.spawnThreat(p);
                 }
@@ -63,7 +61,7 @@ int main()
                 renderer.sliderRelease();
             }
             else if (e.type == sf::Event::MouseMoved) {
-                renderer.sliderDrag((float)e.mouseMove.x);  // no-op unless dragging
+                renderer.sliderDrag((float)e.mouseMove.x);
             }
             else if (e.type == sf::Event::KeyPressed) {
                 switch (e.key.code) {
@@ -75,7 +73,7 @@ int main()
                     break;
                 case sf::Keyboard::R:
                     sim.reset();
-                    renderer.resetSliders();  // costs back to defaults too
+                    renderer.resetSliders();
                     runTime = 0.f;
                     break;
                 case sf::Keyboard::W:
@@ -88,7 +86,7 @@ int main()
                     sim.toggleFocusFire();
                     break;
                 case sf::Keyboard::H: {
-                    // injure whoever is closest to the mouse
+                    // injure the agent nearest the mouse
                     sf::Vector2i m = sf::Mouse::getPosition(window);
                     sim.injureNearestAgent({ (float)m.x, (float)m.y });
                     break;
@@ -102,14 +100,14 @@ int main()
             }
         }
 
-        // spawn-rate dial: level 0..10 maps to 0..3 threats/second
+        // dial level 0..10 -> 0..3 threats per second
         sim.setThreatSpawnRate(renderer.sliderSpawnLevel() * 0.3f);
 
         float dt = clock.restart().asSeconds();
         if (paused || showHelp) {
-            sim.tick(0.f);   // sim frozen but views/commands still work
+            sim.tick(0.f);   // frozen, views/commands still valid
         } else {
-            sim.tick(dt);    // sim clamps big dt spikes itself
+            sim.tick(dt);    // sim clamps dt spikes
             runTime += dt;
         }
 

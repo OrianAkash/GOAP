@@ -4,7 +4,7 @@
 
 using namespace goap;
 
-// colours in one place
+// palette
 namespace {
 const sf::Color COL_BG(25, 28, 34);
 const sf::Color COL_OUTPOST(40, 120, 70);
@@ -39,10 +39,8 @@ bool Renderer::init()
 {
     initSliders();
 
-    // try a few paths so it works from VS (working dir = project folder)
-    // and also when you run the exe straight from x64\Release.
-    // last resort: fonts that ship with Windows, so a missing assets folder
-    // can never kill the demo.
+    // relative paths first (VS working dir vs exe dir), then fonts that ship
+    // with Windows so a missing assets folder can't kill the demo
     const char* paths[] = { "assets/DejaVuSans.ttf",
                             "../assets/DejaVuSans.ttf",
                             "../../assets/DejaVuSans.ttf",
@@ -90,7 +88,7 @@ void Renderer::draw(sf::RenderWindow& window, const Simulation& sim,
 
 void Renderer::drawSliders(sf::RenderWindow& window)
 {
-    // grouping panel so the control reads as a unit, not a floating bit
+    // panel behind the slider
     sf::RectangleShape panel(sf::Vector2f(272.f, 58.f));
     panel.setPosition(1000.f, 26.f);
     panel.setFillColor(sf::Color(0, 0, 0, 110));
@@ -111,8 +109,7 @@ void Renderer::drawSliders(sf::RenderWindow& window)
         track.setFillColor(sf::Color(120, 120, 128));
         window.draw(track);
 
-        // for the pressure dial, fill the used portion red so it reads as a
-        // danger/intensity gauge at a glance
+        // red fill = intensity gauge
         if (s.accent && frac > 0.f) {
             sf::RectangleShape fill(sf::Vector2f(frac * s.w, 3.f));
             fill.setPosition(s.x, s.y - 1.5f);
@@ -185,7 +182,7 @@ void Renderer::drawEntities(sf::RenderWindow& window, const Simulation& sim)
 {
     for (const EntityView& e : sim.entities()) {
         if (e.type == EntityType::Outpost) {
-            // heal zone ring first, then the building
+            // heal ring, then the building
             sf::CircleShape zone(HEAL_ZONE_RADIUS);
             zone.setOrigin(HEAL_ZONE_RADIUS, HEAL_ZONE_RADIUS);
             zone.setPosition(e.pos.x, e.pos.y);
@@ -251,7 +248,7 @@ void Renderer::drawAgents(sf::RenderWindow& window, const Simulation& sim,
     for (const AgentView& a : sim.agents()) {
         bool dead = (a.phase == AgentPhase::Dead);
 
-        // line to whatever the agent is moving to / attacking
+        // line to the current target
         if (!dead && a.hasTarget) {
             sf::Vertex line[2] = {
                 sf::Vertex(sf::Vector2f(a.pos.x, a.pos.y), COL_LINE),
@@ -269,14 +266,14 @@ void Renderer::drawAgents(sf::RenderWindow& window, const Simulation& sim,
             body.setOutlineThickness(2.f);
         } else {
             sf::Color col = COL_AGENT;
-            // blink red-ish when hurt (matches the Survive threshold)
+            // blink when below the Survive threshold
             if (a.health < 35.f && std::fmod(runTime, 0.6f) < 0.3f)
                 col = sf::Color(230, 90, 80);
             body.setFillColor(col);
         }
         window.draw(body);
 
-        // little yellow dot = carrying a weapon
+        // yellow dot = armed
         if (!dead && a.hasWeapon) {
             sf::CircleShape dot(3.5f);
             dot.setOrigin(3.5f, 3.5f);
@@ -288,14 +285,14 @@ void Renderer::drawAgents(sf::RenderWindow& window, const Simulation& sim,
         if (!showLabels)
             continue;
 
-        // line 1: "A1 [EliminateThreat] 87hp"
+        // "A1 [EliminateThreat] 87hp"
         char line1[64];
         std::snprintf(line1, sizeof(line1), "A%d [%s] %.0fhp", a.id,
                       a.goalName.c_str(), a.health);
         window.draw(makeText(line1, 13, a.pos.x - 40.f, a.pos.y - 44.f,
                              dead ? COL_DIM : COL_TEXT));
 
-        // line 2: the plan, current action in [brackets]
+        // plan, current action in [brackets]
         std::string line2;
         if (dead) {
             line2 = "(dead)";
@@ -318,20 +315,20 @@ void Renderer::drawAgents(sf::RenderWindow& window, const Simulation& sim,
 void Renderer::drawHud(sf::RenderWindow& window, const Simulation& sim,
                        bool paused, float runTime)
 {
-    // controls, always visible top-left
+    // controls legend
     window.draw(makeText(
         "LMB spawn threat    RMB spawn weapon    W remove weapons\n"
         "H injure agent    T melee cost    C coordination    SPACE pause    R reset    F1 labels    ESC quit",
         13, 10.f, 8.f, COL_DIM));
 
-    // squad coordination state, top-left under the controls
+    // coordination state
     bool coord = sim.focusFire();
     window.draw(makeText(
         coord ? "squad coordination: ON (defenders split targets)"
               : "squad coordination: OFF (defenders dogpile the nearest)",
         13, 10.f, 44.f, coord ? COL_OUTPOST_EDGE : COL_WARN));
 
-    // "holding the line" banner, centred, when the squad is outnumbered
+    // outnumbered banner
     if (sim.holdingLine()) {
         sf::Text banner = makeText("OUTNUMBERED - HOLDING THE LINE", 18, 0.f, 40.f,
                                    COL_THREAT);
@@ -339,7 +336,7 @@ void Renderer::drawHud(sf::RenderWindow& window, const Simulation& sim,
         window.draw(banner);
     }
 
-    // status, top-right
+    // status line
     char status[96];
     std::snprintf(status, sizeof(status), "t=%.1fs%s",
                   runTime, paused ? "   [PAUSED]" : "");
@@ -351,7 +348,7 @@ void Renderer::drawHud(sf::RenderWindow& window, const Simulation& sim,
 
 void Renderer::drawLog(sf::RenderWindow& window, const Simulation& sim)
 {
-    // last 8 event log lines, bottom left. this is the "watch the AI think" bit
+    // last 8 log lines, bottom left
     const std::vector<std::string>& log = sim.eventLog();
     std::size_t count = log.size() < 8 ? log.size() : 8;
     float y = 720.f - 18.f * count - 8.f;

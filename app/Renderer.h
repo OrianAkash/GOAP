@@ -1,8 +1,7 @@
 #pragma once
 // Renderer.h
-// Draws everything: the world, the agents with their goal + plan labels,
-// the HUD, the event log and the help overlay. Part B of the demo.
-// The renderer only READS from the simulation - all game logic is in sim/.
+// draws the world, agent goal/plan labels, HUD, event log and help overlay.
+// read-only view of the simulation, no game logic in here.
 
 #include <SFML/Graphics.hpp>
 #include <string>
@@ -11,16 +10,14 @@
 
 class Renderer {
 public:
-    // loads the font. returns false if assets/DejaVuSans.ttf is missing
+    // loads the font, false if nothing usable found
     bool init();
 
     void draw(sf::RenderWindow& window, const goap::Simulation& sim,
               bool paused, bool showLabels, bool showHelp, float runTime);
 
-    // --- spawn-rate slider (v1.1 UI). main.cpp drives this from mouse
-    // events and pushes the value into the sim every frame. ---
-    // returns true if the press landed on the slider, so the caller knows NOT
-    // to also treat that click as "spawn a threat".
+    // spawn-rate slider. sliderPress returns true if the click landed on it
+    // so main.cpp doesn't also spawn a threat from the same click.
     bool sliderPress(float mx, float my);
     void sliderDrag(float mx);          // move whichever slider is being dragged
     void sliderRelease();               // let go of all sliders
@@ -30,7 +27,7 @@ public:
 private:
     sf::Font m_font;
 
-    // a minimal draggable slider (SFML has no widgets, so we roll our own)
+    // minimal draggable slider, SFML has no widgets
     struct Slider {
         std::string label;
         float x = 0.f, y = 0.f, w = 0.f;   // track geometry, screen pixels
@@ -42,7 +39,7 @@ private:
     void initSliders();
     void drawSliders(sf::RenderWindow& window);
 
-    // little helper so making text is a one-liner
+    // one-liner text helper
     sf::Text makeText(const std::string& str, unsigned size, float x, float y,
                       sf::Color color);
 

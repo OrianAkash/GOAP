@@ -1,10 +1,7 @@
 #pragma once
 // WorldState.h
-// The symbolic world state the GOAP planner works with.
-// Everything the planner knows about the world is boiled down to these
-// 8 boolean facts. The actual game world (positions, hp, timers...) lives
-// in Simulation.cpp - before planning we take a "snapshot" of it into
-// one of these.
+// symbolic world state for the planner. the real world (positions, hp,
+// timers) lives in Simulation.cpp and gets snapshotted into these facts.
 
 #include <map>
 #include <string>
@@ -25,25 +22,21 @@ enum class Fact {
 
 const char* factName(Fact f);
 
-// A set of fact -> bool pairs. Used for 3 different things:
-//  - the agent's current state (all 8 facts filled in)
-//  - action preconditions / effects (only the facts that matter)
-//  - goal states (usually just 1 fact)
+// fact -> bool map. used for the current state, action pre/eff and goals.
 struct WorldState {
     std::map<Fact, bool> facts;
 
     void set(Fact f, bool value);
-    bool has(Fact f) const;   // is this fact present in the map at all
-    bool get(Fact f) const;   // its value (false if not present)
+    bool has(Fact f) const;   // present at all?
+    bool get(Fact f) const;   // value, false if missing
 
-    // true if every fact in 'conditions' is present in us with the same value.
-    // e.g. currentState.satisfies(goalState) or currentState.satisfies(action.pre)
+    // every fact in 'conditions' matches us
     bool satisfies(const WorldState& conditions) const;
 
-    // how many facts in 'conditions' don't match us. used as the A* heuristic.
+    // mismatch count, used as the A* heuristic
     int countUnsatisfied(const WorldState& conditions) const;
 
-    // turns the state into a string key so the planner can keep a closed set
+    // string key for the closed set
     std::string encode() const;
 };
 

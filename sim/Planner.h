@@ -1,12 +1,8 @@
 #pragma once
 // Planner.h
-// The GOAP planner. Regressive A*: we search BACKWARDS from the goal
-// towards the current state (this is how Orkin describes it for F.E.A.R.).
-//
-// Returns the plan in execution order (plan[0] runs first).
-// An empty vector means either "no plan exists" or "the goal is already
-// satisfied" - the caller (Simulation) checks goal satisfaction itself
-// before calling us, so it can tell the two apart.
+// regressive A*: search backwards from the goal (Orkin style).
+// returns the plan in execution order. empty = no plan / already satisfied,
+// Simulation checks satisfaction itself so it can tell the two apart.
 
 #include <vector>
 #include "Action.h"

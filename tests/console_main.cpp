@@ -1,7 +1,6 @@
 // console_main.cpp
-// Headless smoke test: runs the full simulation for 60 sim-seconds with some
-// scripted events (same things the demo hotkeys will do) and prints what the
-// agents are up to. Lets us test Part A before the SFML app (Part B) exists.
+// headless smoke test: 60 sim-seconds with scripted events, prints agent
+// status and the event log. no graphics needed.
 
 #include "../contract/Contract.h"
 #include <cstdio>
@@ -49,7 +48,7 @@ int main()
     float nextStatus = 0.f;
 
     for (float t = 0.f; t < 60.f; t += dt) {
-        // scripted events, same as the demo hotkeys:
+        // scripted events:
         if (!did5 && t >= 5.f) {
             did5 = true;
             sim.spawnThreat({1200.f, 100.f});   // unarmed agents must fetch weapons
@@ -89,7 +88,7 @@ int main()
     for (const std::string& line : sim.eventLog())
         std::printf("%s\n", line.c_str());
 
-    // basic sanity so the exit code means something
+    // sanity checks
     if (sim.agents().size() != 3) {
         std::printf("ERROR: expected 3 agents\n");
         return 1;

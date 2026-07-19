@@ -2,16 +2,10 @@
 
 namespace goap {
 
-// IMPORTANT design note (took us a while to figure this out):
-// every movement action also sets the OTHER location facts to false,
-// because walking somewhere means you are no longer at the old place.
-// Without this the planner can output plans that are logically fine but
-// physically nonsense, e.g.
-//     GoToWeapon > ApproachThreat > PickUpWeapon
-// (walk to the weapon, walk away to the threat, then "pick up" a weapon
-// that is nowhere near you). With the location facts cleared, that
-// ordering contradicts itself during the search and gets rejected, so
-// only the sensible order survives. See docs/PLANNER.md.
+// movement actions also set the OTHER location facts false. without this the
+// planner made orders like GoToWeapon > ApproachThreat > PickUpWeapon (walks
+// away from the gun, then "picks it up"). clearing them makes those orderings
+// contradict during the search so they get pruned.
 
 std::vector<Action> buildActionList(bool meleeCheap)
 {
@@ -60,8 +54,7 @@ std::vector<Action> buildActionList(bool meleeCheap)
     {
         Action a;
         a.name = "MeleeThreat";
-        // normally a desperate fallback (cost 20), but the demo can make it
-        // cost 1 to show how cost tuning changes the agents' behaviour
+        // fallback normally, T key drops it to 1 for the cost demo
         a.cost = meleeCheap ? 1 : 20;
         a.pre.set(Fact::ThreatInRange, true);
         a.eff.set(Fact::ThreatExists, false);
@@ -96,8 +89,7 @@ std::vector<Action> buildActionList(bool meleeCheap)
         list.push_back(a);
     }
     {
-        // radio for backup - only possible from the outpost (the "command
-        // post"). the agent plans this when fighting can't reach its goal.
+        // radio for backup, only usable at the outpost
         Action a;
         a.name = "CallReinforcements";
         a.cost = 1;

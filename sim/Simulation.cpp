@@ -1,8 +1,6 @@
-// Simulation.cpp - Part A of our GOAP demo.
-// Implements the Simulation class from contract/Contract.h.
-// All the "game" lives in here: agents, threats, weapons, the outpost,
-// goal selection and action execution. The planner itself is in Planner.cpp
-// and only ever sees the 8 symbolic facts from WorldState.h.
+// Simulation.cpp
+// the whole game: agents, threats, weapons, outpost, goal selection and
+// action execution. the planner itself is in Planner.cpp.
 
 #include "../contract/Contract.h"
 #include "WorldState.h"
@@ -17,7 +15,7 @@
 namespace goap {
 
 // ---------------------------------------------------------------------------
-// tuning values, all in one place so they are easy to tweak
+// tuning values
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -273,9 +271,7 @@ struct Simulation::Impl {
         return nearestThreat(a.pos);
     }
 
-    // "hold the line": once the threats clearly outnumber the living defenders
-    // the whole squad falls back to defend the outpost. hysteresis (enter at
-    // 2x, leave at 1x) stops it flickering on the boundary.
+    // outnumbered check, 2x to enter / 1x to leave so it doesn't flicker
     void updateHoldStatus()
     {
         int living = countLivingAgents();
@@ -285,10 +281,8 @@ struct Simulation::Impl {
         else if (th <= living)     holdingLine = false;
     }
 
-    // the squad coordinator (this is the layer ON TOP of GOAP, the way F.E.A.R.
-    // does it): hand each defender a different threat so they spread out and
-    // focus-fire instead of all dogpiling the nearest one. Each agent still
-    // uses its own GOAP plan to actually carry out the assignment.
+    // coordinator, runs before the agents plan: hand each defender its own
+    // threat so they don't all dogpile the nearest one
     void coordinateTargets()
     {
         if (threats.empty()) {
@@ -387,7 +381,7 @@ struct Simulation::Impl {
 
     // ---- planning side ----------------------------------------------------
 
-    // squash the real world down into the 8 symbolic facts for one agent
+    // snapshot the world into planner facts, from this agent's point of view
     WorldState snapshotFor(const AgentData& a)
     {
         WorldState s;
@@ -418,9 +412,8 @@ struct Simulation::Impl {
         s.set(Fact::AtPatrolPoint, dist(a.pos, PATROL_POINTS[a.patrolIndex]) <= PATROL_ARRIVE);
         s.set(Fact::AtOutpost, dist(a.pos, OUTPOST_POS) <= HEAL_ZONE);
 
-        // hysteresis: once in survive mode you count as "low health" until
-        // you are healed back up to HEALED_HP, otherwise the goal would be
-        // "done" the moment you regenerate 1 hp past the threshold
+        // hysteresis: stays "low health" until healed to HEALED_HP, or the
+        // Survive goal would complete the moment we cross the threshold
         s.set(Fact::LowHealth, a.surviveMode ? (a.hp < HEALED_HP) : (a.hp < LOW_HP));
 
         // squad-wide fact: has backup already been radioed this wave?
@@ -675,7 +668,7 @@ struct Simulation::Impl {
 
         a.replanTimer -= dt;
 
-        // 1) which goal matters most right now?
+        // 1) pick goal
         std::string wanted = pickGoal(a);
         if (wanted != a.goal) {
             a.goal = wanted;
@@ -687,12 +680,12 @@ struct Simulation::Impl {
 
         WorldState now = snapshotFor(a);
 
-        // 2) is the action we are in the middle of still doable?
+        // 2) current action still valid?
         if (!a.plan.empty() && !now.satisfies(a.plan[a.step].pre)) {
             invalidatePlan(a, a.plan[a.step].name + " no longer valid");
         }
 
-        // 3) no plan? make one (unless the goal is already satisfied)
+        // 3) plan if needed
         if (a.plan.empty()) {
             a.hasTarget = false;
             if (now.satisfies(goalStateFor(a.goal))) {
@@ -713,10 +706,10 @@ struct Simulation::Impl {
                 return;
             }
             addLog(agentName(a) + ": plan = " + planToString(a.plan));
-            return;  // start executing next tick
+            return;  // execute from next tick
         }
 
-        // 4) run the current action
+        // 4) execute
         executeAction(a, dt);
     }
 
@@ -778,10 +771,7 @@ struct Simulation::Impl {
         }
     }
 
-    // soft collision: nudge overlapping bodies apart so agents and threats
-    // stop stacking on the same pixel (most visible when the squad holds the
-    // line or patrols). a couple of relaxation passes settle it. this only
-    // moves things a few px and never blocks movement, so combat is unaffected.
+    // soft collision: nudge overlapping bodies apart, cosmetic only
     void resolveCollisions()
     {
         struct Body { Vec2* pos; float r; };
@@ -890,7 +880,7 @@ struct Simulation::Impl {
 
     void tick(float dt)
     {
-        // clamp dt so a debugger pause or laggy frame can't teleport things
+        // clamp dt so a lag spike can't teleport things
         if (dt < 0.f) dt = 0.f;
         if (dt > 0.1f) dt = 0.1f;
 
@@ -907,7 +897,7 @@ struct Simulation::Impl {
                 }
             }
 
-            // costs changed -> everyone throws away their plan once
+            // costs changed -> everyone replans once
             if (replanEveryone) {
                 replanEveryone = false;
                 for (auto& a : agents) {
@@ -954,7 +944,7 @@ struct Simulation::Impl {
 };
 
 // ---------------------------------------------------------------------------
-// the public class just forwards everything to Impl
+// public class forwards to Impl
 // ---------------------------------------------------------------------------
 
 Simulation::Simulation() : m_impl(new Impl())
